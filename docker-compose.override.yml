@@ -1,0 +1,37 @@
+# docker-compose.override.yml — dev overrides, loaded automatically
+# Adds hot-reload, bind-mounts source, exposes extra ports for debugging.
+#
+# Usage (dev):   docker-compose up --build
+# Usage (prod):  docker-compose -f docker-compose.yml up --build
+# =============================================================================
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Mount source so uvicorn --reload picks up changes without rebuilding
+    volumes:
+      - ./app:/app/app            # live code reload
+      - ./data:/app/data
+      - ./.cache:/app/.cache
+    environment:
+      APP_ENV: development
+      DEBUG: "true"
+      LOG_LEVEL: DEBUG
+    command:
+      - /app/scripts/start.sh
+
+  frontend:
+    # In dev, run vite dev server instead of nginx so HMR works
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1

@@ -1,0 +1,131 @@
+# docker-compose.yml — no version key (obsolete in Compose v2)
+#
+# Quick start:
+#   1. cp .env.example .env       (edit OPENAI_API_KEY at minimum)
+#   2. docker-compose up --build
+#   3. Open http://localhost:3000
+#
+# Services:
+#   qdrant    :6333  — vector store
+#   postgres  :5432  — relational DB
+#   redis     :6379  — cache / rate limiting
+#   api       :8000  — FastAPI backend   → http://localhost:8000/docs
+#   frontend  :3000  — React chat UI     → http://localhost:3000
+# =============================================================================
+
+services:
+
+  # ── Vector Store ─────────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.11.3
+    container_name: fin_qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    # Qdrant distroless image has no shell tools — healthcheck disabled.
+    # The api service waits via start_period + retry logic in start.sh.
+    restart: unless-stopped
+
+  # ── Relational DB ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: fin_postgres
+    environment:
+      POSTGRES_DB: fin_ai_agent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fin_ai_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Cache + Rate Limiting ─────────────────────────────────────────────────────
+  redis:
+    image: redis:7.4-alpine
+    container_name: fin_redis
+    command: redis-server --appendonly yes --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fin-ai-agent-api:latest
+    container_name: fin_api
+    # Override .env localhost URLs to point at Docker container names
+    environment:
+      # These override anything in .env for container-to-container networking
+      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/fin_ai_agent
+      REDIS_URL: redis://redis:6379/0
+      CRM_API_URL: http://localhost:9001/mock/crm
+      TICKETING_API_URL: http://localhost:9001/mock/tickets
+      NOTIFICATION_API_URL: http://localhost:9001/mock/notify
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      qdrant:
+        condition: service_started   # no healthcheck on qdrant — start.sh waits
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data          # downloaded datasets persist across restarts
+      - ./.cache:/app/.cache      # FlashRank + sentence-transformer model caches
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── React Frontend ─────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000/api/v1
+    image: fin-ai-agent-frontend:latest
+    container_name: fin_frontend
+    ports:
+      - "3000:80"          # nginx inside listens on 80, mapped to host 3000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: fin-ai-network
+    external: true
