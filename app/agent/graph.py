@@ -39,6 +39,7 @@ Full agent flow:
                 ▼
               END
 """
+import asyncio
 import uuid
 from typing import Any, TypedDict
 
@@ -56,6 +57,7 @@ from app.agent.nodes.routing_node import (
 )
 from app.agent.nodes.safety_checker import SafetyCheckerNode
 from app.agent.state import AgentState
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.retrieval.rag_pipeline import RAGPipeline
 from app.validation.validator import ValidationNode
@@ -115,7 +117,7 @@ def build_agent_graph(
     retrieval_node = RetrievalNode(rag_pipeline=rag_pipeline)
     reasoning_node = ReasoningNode(llm_client=llm_client)
     action_node = ActionExecutionNode()
-    validation_node = ValidationNode()
+    validation_node = ValidationNode(llm_client=llm_client)
 
     # ── Wrap each async node method into GraphState → GraphState ──────────────
     def wrap(node_fn):
@@ -219,9 +221,15 @@ class FinAgent:
         customer_id: str | None = None,
         conversation_history: list[dict[str, str]] | None = None,
         customer_data: dict[str, Any] | None = None,
+        streaming: bool = False,
     ) -> AgentState:
         """
         Process one customer turn end-to-end.
+
+        Args:
+            streaming: When True, the reasoning node will use a streaming LLM
+                       client and populate state.streaming_generator with an
+                       async generator of token strings for the SSE endpoint.
 
         Returns completed AgentState with:
           .final_response      — text to send to the customer
@@ -229,6 +237,7 @@ class FinAgent:
           .citations           — source labels for UI display
           .confidence_score    — 0.0–1.0
           .should_escalate     — True if human handoff needed
+          .streaming_generator — AsyncGenerator[str, None] | None (only when streaming=True)
         """
         initial_state = AgentState(
             session_id=session_id or str(uuid.uuid4()),
@@ -237,6 +246,7 @@ class FinAgent:
             user_message=user_message,
             messages=conversation_history or [],
             customer_data=customer_data or {},
+            metadata={"streaming": streaming},
         )
         initial_state.add_message("user", user_message)
 
@@ -246,11 +256,32 @@ class FinAgent:
             preview=user_message[:60],
         )
 
-        # LangGraph expects {"data": state_dict}
-        output: GraphState = await self._graph.ainvoke(
-            {"data": initial_state.to_dict()}
-        )
-        result = AgentState.from_dict(output["data"])
+        # LangGraph expects {"data": state_dict}. Bound the whole turn so a
+        # slow/hung downstream call (LLM, Qdrant, CRM) can never pin a worker
+        # indefinitely — on timeout we degrade to a graceful escalation.
+        try:
+            output: GraphState = await asyncio.wait_for(
+                self._graph.ainvoke({"data": initial_state.to_dict()}),
+                timeout=settings.agent_timeout_seconds,
+            )
+            result = AgentState.from_dict(output["data"])
+        except asyncio.TimeoutError:
+            logger.error(
+                "Agent turn timed out",
+                session_id=initial_state.session_id,
+                timeout_s=settings.agent_timeout_seconds,
+            )
+            result = initial_state
+            result.response_type = "escalation"
+            result.should_escalate = True
+            result.escalation_reason = "processing_timeout"
+            result.final_response = (
+                "I'm sorry — this is taking longer than expected. "
+                "I'm connecting you with a human specialist who can help."
+            )
+            result.add_reasoning(
+                f"Turn exceeded {settings.agent_timeout_seconds}s budget; escalated."
+            )
 
         # Append agent response to history for next turn
         result.add_message("assistant", result.final_response)

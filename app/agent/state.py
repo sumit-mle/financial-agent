@@ -98,6 +98,8 @@ class AgentState:
     iteration_count: int = 0
     error: str = ""                        # Set if any node fails
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Set by ReasoningNode when streaming=True; the SSE endpoint iterates it.
+    streaming_generator: Any = None        # AsyncGenerator[str, None] | None
 
     def add_message(self, role: str, content: str) -> None:
         """Append a message to the conversation history."""
