@@ -79,13 +79,40 @@ class ReasoningNode:
 
     def _build_base_prompt(self, state: AgentState) -> str:
         """Build the base reasoning prompt."""
+        context = state.assembled_context
+        # When retrieval returned nothing, tell the model explicitly so it
+        # grounds on "no sources" rather than inventing policy/account facts.
+        if state.metadata.get("context_empty") or not context.strip():
+            context = (
+                "## Knowledge Context\n"
+                "NO knowledge base passages were retrieved for this query. "
+                "Do NOT fabricate specific policies, account details, balances, "
+                "fees, or case facts. If answering requires such specifics, choose "
+                "\"clarify\" (ask the customer for what you need) or \"escalate\"."
+            )
         return _REASONING_PROMPT.format(
-            assembled_context=state.assembled_context,
+            assembled_context=context,
             user_message=state.user_message,
             escalation_threshold=settings.agent_escalation_threshold,
             iteration=state.iteration_count,
             max_iterations=settings.agent_max_iterations,
         )
+
+    def _retrieval_failure_response(self, state: AgentState) -> dict:
+        """Escalation fallback when the knowledge/retrieval layer is unavailable."""
+        return {
+            "decision": "escalate",
+            "confidence": 0.0,
+            "response": (
+                "I'm unable to access our knowledge base at the moment, so I don't "
+                "want to risk giving you inaccurate information. Let me connect you "
+                "with a human specialist who can help right away."
+            ),
+            "action_name": None,
+            "action_parameters": {},
+            "reasoning": "Retrieval layer failed — escalating instead of answering ungrounded",
+            "follow_up_suggestions": [],
+        }
 
     @experiment_prompt_override
     async def _get_experimental_prompt(self, base_prompt: str, state: AgentState) -> Optional[str]:
@@ -179,7 +206,14 @@ Examples:
         state.iteration_count += 1
         start_time = time.time()
 
-        if self._llm is None:
+        if state.metadata.get("retrieval_failed"):
+            # Knowledge layer is down — never answer ungrounded, escalate.
+            logger.warning(
+                "Retrieval failed upstream — escalating without LLM call",
+                session_id=state.session_id,
+            )
+            parsed = self._retrieval_failure_response(state)
+        elif self._llm is None:
             logger.warning("No LLM client configured — using fallback response")
             parsed = self._fallback_response(state)
         else:
@@ -194,19 +228,42 @@ Examples:
             prompt_version = "experimental" if experimental_prompt else "control"
             
             try:
-                response = await self._llm.ainvoke(final_prompt)
-                raw = response.content if hasattr(response, "content") else str(response)
+                if state.metadata.get("streaming") and hasattr(self._llm, "astream"):
+                    # ── Streaming path ───────────────────────────────────────
+                    # Collect all tokens first (we need the full text to parse
+                    # the JSON structure), then expose them via a generator so
+                    # the SSE endpoint can replay them token-by-token.
+                    tokens: list[str] = []
+                    async for chunk in self._llm.astream(final_prompt):
+                        token = (
+                            chunk.content
+                            if hasattr(chunk, "content")
+                            else str(chunk)
+                        )
+                        tokens.append(token)
+                    raw = "".join(tokens)
+
+                    async def _token_gen(toks: list[str]):
+                        for t in toks:
+                            yield t
+
+                    state.streaming_generator = _token_gen(tokens)
+                else:
+                    # ── Non-streaming path (default) ─────────────────────────
+                    response = await self._llm.ainvoke(final_prompt)
+                    raw = response.content if hasattr(response, "content") else str(response)
+
                 state.llm_response_raw = raw
                 parsed = self._parse_llm_output(raw)
-                
+
                 # Track A/B testing metrics
                 await self._track_experiment_metrics(
-                    state, 
-                    prompt_version, 
-                    parsed, 
-                    time.time() - start_time
+                    state,
+                    prompt_version,
+                    parsed,
+                    time.time() - start_time,
                 )
-                
+
             except Exception as exc:
                 logger.error(
                     "Reasoning node LLM call failed",

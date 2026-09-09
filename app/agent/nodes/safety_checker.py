@@ -120,22 +120,57 @@ class SafetyCheckerNode:
             state.add_reasoning("Safety check: Prompt injection detected — short-circuiting")
             return state
 
-        # ── Regulated advice check ────────────────────────────────────────────
-        regulated_type = self._check_regulated(text)
-        if regulated_type:
-            logger.info(
-                "Regulated advice request detected — escalating",
-                advice_type=regulated_type,
-                session_id=state.session_id,
-            )
-            state.safety_check_passed = False
-            state.safety_violation = f"regulated_advice:{regulated_type}"
-            state.final_response = _SAFE_RESPONSES["regulated_advice"]
-            state.response_type = "escalation"
-            state.should_escalate = True
-            state.escalation_reason = f"Customer requested regulated advice: {regulated_type}"
-            state.add_reasoning(f"Safety check: Regulated advice ({regulated_type}) — escalating")
-            return state
+        # ── Regulated advice / Policy compliance check ────────────────────────
+        try:
+            from app.models.specialized import get_policy_classifier
+            policy_classifier = await get_policy_classifier()
+            needs_escalation, policy_reason = await policy_classifier.requires_immediate_escalation(text)
+            
+            if needs_escalation:
+                logger.info(
+                    "Policy classification requires escalation",
+                    reason=policy_reason,
+                    session_id=state.session_id,
+                )
+                state.safety_check_passed = False
+                state.safety_violation = f"policy_violation:{policy_reason}"
+                state.final_response = _SAFE_RESPONSES["regulated_advice"]
+                state.response_type = "escalation"
+                state.should_escalate = True
+                state.escalation_reason = f"Compliance policy escalation: {policy_reason}"
+                state.add_reasoning(f"Safety check: Policy classifier triggered — escalating")
+                return state
+                
+            # Fallback to simple regex check if classifier didn't catch it
+            regulated_type = self._check_regulated(text)
+            if regulated_type:
+                logger.info(
+                    "Regulated advice request detected (regex) — escalating",
+                    advice_type=regulated_type,
+                    session_id=state.session_id,
+                )
+                state.safety_check_passed = False
+                state.safety_violation = f"regulated_advice:{regulated_type}"
+                state.final_response = _SAFE_RESPONSES["regulated_advice"]
+                state.response_type = "escalation"
+                state.should_escalate = True
+                state.escalation_reason = f"Customer requested regulated advice: {regulated_type}"
+                state.add_reasoning(f"Safety check: Regulated advice ({regulated_type}) — escalating")
+                return state
+                
+        except Exception as e:
+            logger.warning(f"Policy classification failed: {e}")
+            # Fallback to simple regex check
+            regulated_type = self._check_regulated(text)
+            if regulated_type:
+                state.safety_check_passed = False
+                state.safety_violation = f"regulated_advice:{regulated_type}"
+                state.final_response = _SAFE_RESPONSES["regulated_advice"]
+                state.response_type = "escalation"
+                state.should_escalate = True
+                state.escalation_reason = f"Customer requested regulated advice: {regulated_type}"
+                state.add_reasoning(f"Safety check: Regulated advice ({regulated_type}) — escalating")
+                return state
 
         # ── Emotional escalation check using sentiment analysis ───────────────
         try:
@@ -161,6 +196,17 @@ class SafetyCheckerNode:
         state.safety_check_passed = True
         state.add_reasoning("Safety check: Passed all checks")
         return state
+
+    def _check_injection(self, text: str) -> bool:
+        """Return True if text matches any prompt-injection pattern."""
+        return any(p.search(text) for p in _INJECTION_PATTERNS)
+
+    def _check_regulated(self, text: str) -> str | None:
+        """Return the regulated-advice category name if matched, else None."""
+        for pattern, category in _REGULATED_PATTERNS:
+            if pattern.search(text):
+                return category
+        return None
 
     def _check_pii_fallback(self, text: str) -> str | None:
         """Fallback regex-based PII detection."""

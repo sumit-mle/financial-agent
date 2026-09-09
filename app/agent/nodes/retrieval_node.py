@@ -8,6 +8,8 @@ Maps to: "RETRIEVAL / RAG LAYER" in the architecture.
 """
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
+
 from app.agent.state import AgentState
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -50,7 +52,10 @@ class RetrievalNode:
             filters = {"product": product_filters}
 
         try:
-            result = self._rag.run(
+            # RAGPipeline.run is synchronous (embedding + Qdrant + rerank);
+            # run it in a worker thread so it never blocks the event loop.
+            result = await run_in_threadpool(
+                self._rag.run,
                 query=query,
                 customer_data=state.customer_data or None,
                 conversation_history=state.messages,
@@ -89,6 +94,10 @@ class RetrievalNode:
                 f"Retrieved {len(result.raw_candidates)} candidates, "
                 f"reranked to {len(result.reranked)} passages"
             )
+            # Flag a grounded-context miss so the reasoning node won't fabricate
+            # policy/account specifics out of parametric memory.
+            state.metadata["retrieval_failed"] = False
+            state.metadata["context_empty"] = len(result.reranked) == 0
             logger.info(
                 "Retrieval node complete",
                 candidates=len(result.raw_candidates),
@@ -101,5 +110,9 @@ class RetrievalNode:
             logger.error("Retrieval node failed", error=str(exc), session_id=state.session_id)
             state.error = f"retrieval_failed:{exc}"
             state.assembled_context = ""
+            # Hard failure — the knowledge layer is down. The reasoning node must
+            # escalate rather than answer from an empty context.
+            state.metadata["retrieval_failed"] = True
+            state.metadata["context_empty"] = True
 
         return state
