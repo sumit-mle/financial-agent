@@ -55,8 +55,12 @@ class ResponseValidator:
     Runs the complete post-generation validation pipeline on an agent response.
     """
 
-    def __init__(self, guardrails: GuardrailModels | None = None) -> None:
-        self._guardrails = guardrails or GuardrailModels()
+    def __init__(
+        self,
+        guardrails: GuardrailModels | None = None,
+        llm_client=None,
+    ) -> None:
+        self._guardrails = guardrails or GuardrailModels(llm_client=llm_client)
 
     def _check_policy_compliance(self, response: str) -> list[str]:
         """Return list of policy violation types found in the response."""
@@ -184,8 +188,12 @@ class ValidationNode:
     Replaces the stub _deliver_response_node in graph.py.
     """
 
-    def __init__(self, validator: ResponseValidator | None = None) -> None:
-        self._validator = validator or ResponseValidator()
+    def __init__(
+        self,
+        validator: ResponseValidator | None = None,
+        llm_client=None,
+    ) -> None:
+        self._validator = validator or ResponseValidator(llm_client=llm_client)
 
     async def run(self, state: AgentState) -> AgentState:
         """Validate the response and update state accordingly."""

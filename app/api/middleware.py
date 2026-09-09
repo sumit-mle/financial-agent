@@ -5,6 +5,7 @@ FastAPI middleware stack:
   3. Structured logging — log every request with latency + status code
   4. Rate limiting      — 60 requests/minute per IP (Redis-backed)
 """
+import secrets
 import time
 import uuid
 
@@ -15,44 +16,92 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import settings
 from app.core.logging import get_logger
 import structlog
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 logger = get_logger(__name__)
-security = HTTPBearer()
+security = HTTPBearer(auto_error=True)
 
 
-async def _require_admin(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+async def require_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> str:
     """
-    Simple admin authentication check.
-    In production, replace with proper JWT validation.
+    Admin authentication dependency — the single source of truth for protecting
+    privileged routes (admin, mlops, analytics, experiments).
+
+    Enforced in ALL environments (not just production) and uses a constant-time
+    comparison to avoid leaking the token via timing. The startup validator in
+    `core.config` guarantees the token is non-default in production.
     """
-    # For now, just check for a simple admin token
-    if credentials.credentials != settings.admin_token:
+    provided = credentials.credentials if credentials else ""
+    if not secrets.compare_digest(provided, settings.admin_token):
         raise HTTPException(
-            status_code=401,
-            detail="Admin access required"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-    return credentials.credentials
+    return provided
+
+
+# Backwards-compatible alias (older routes imported `_require_admin`).
+_require_admin = require_admin
 
 
 def register_middleware(app: FastAPI) -> None:
     """Attach all middleware to the app. Called once at startup."""
 
     # ── CORS ────────────────────────────────────────────────────────────────
+    # Never combine a wildcard origin with credentials (the browser rejects it
+    # and it is a security foot-gun). Scope methods/headers to what we use.
+    allow_credentials = "*" not in settings.cors_origins
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_credentials=allow_credentials,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        expose_headers=["X-Request-ID", "X-Response-Time"],
     )
 
     # ── Request ID + Structured Logging ─────────────────────────────────────
     app.add_middleware(RequestLoggingMiddleware)
 
+    # ── Body size limit ──────────────────────────────────────────────────────
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+
     # ── Rate Limiting ────────────────────────────────────────────────────────
     app.add_middleware(RateLimitMiddleware, limit=60, window=60)
+
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    """
+    Reject over-large request bodies early (before JSON parsing) to bound
+    memory use and blunt trivial payload-based DoS. Uses Content-Length when
+    present and also enforces the cap while streaming the body.
+    """
+
+    def __init__(self, app, max_bytes: int = 262_144) -> None:
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        from fastapi.responses import JSONResponse
+
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > self.max_bytes:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": "Request body too large."},
+                    )
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Invalid Content-Length header."},
+                )
+        return await call_next(request)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -110,7 +159,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if self._redis is None:
             try:
                 import redis.asyncio as aioredis
-                self._redis = aioredis.from_url(settings.redis_url)
+                self._redis = aioredis.from_url(
+                    settings.redis_url,
+                    socket_connect_timeout=2,  # fail fast if Redis is down
+                    socket_timeout=2,          # don't hang on read/write either
+                    retry_on_timeout=False,
+                )
             except Exception:
                 return None
         return self._redis

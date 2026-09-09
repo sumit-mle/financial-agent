@@ -9,9 +9,10 @@ REST API endpoints for managing MLOps pipeline:
 """
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Depends
 from pydantic import BaseModel, Field
 
+from app.api.middleware import require_admin
 from app.core.logging import get_logger
 from app.mlops.pipeline import get_mlops_pipeline, RetrainingTrigger
 from app.mlops.feedback_collector import get_feedback_collector, FeedbackType
@@ -19,7 +20,11 @@ from app.mlops.model_registry import get_model_registry, ModelStage, DeploymentS
 from app.mlops.data_processor import get_data_processor, DataProcessingConfig
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/mlops", tags=["MLOps"])
+router = APIRouter(
+    prefix="/mlops",
+    tags=["MLOps"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 # Pydantic models for API

@@ -99,10 +99,19 @@ class AssembledContext:
                 if char_budget <= 0:
                     break
                 citation = chunk.source_label
-                passage = (
+                header = (
                     f"[{i}] Source: {citation} (score: {chunk.final_score:.3f})\n"
-                    f"{chunk.text}"
                 )
+                # Reserve budget for the header, then fit the body into whatever
+                # remains. A single oversized chunk must not blow the token
+                # budget — truncate it so the rendered prompt stays bounded.
+                available = char_budget - len(header)
+                if available <= 0:
+                    break
+                body = chunk.text
+                if len(body) > available:
+                    body = body[:available].rstrip() + " …[truncated]"
+                passage = header + body
                 passage_parts.append(passage)
                 char_budget -= len(passage)
             parts.append("## Relevant Knowledge\n" + "\n\n".join(passage_parts))

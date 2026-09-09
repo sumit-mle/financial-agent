@@ -4,8 +4,9 @@ Protected by API key in production.
 """
 import asyncio
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends
 
+from app.api.middleware import require_admin
 from app.api.schemas import (
     HealthResponse,
     IngestRequest,
@@ -19,15 +20,6 @@ from app.ingestion.processors.vector_store import VectorStoreWriter
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
-
-
-def _require_admin(x_api_key: str | None = Header(default=None)) -> None:
-    """Simple API key guard for admin endpoints."""
-    if settings.is_production and x_api_key != settings.secret_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -45,7 +37,8 @@ async def health_check() -> HealthResponse:
         client.get_collections()
         services["qdrant"] = "ok"
     except Exception as exc:
-        services["qdrant"] = f"error: {exc}"
+        logger.warning("Health check: Qdrant unreachable", error=str(exc))
+        services["qdrant"] = "error"
 
     # Check Redis
     try:
@@ -55,7 +48,8 @@ async def health_check() -> HealthResponse:
         await r.aclose()
         services["redis"] = "ok"
     except Exception as exc:
-        services["redis"] = f"error: {exc}"
+        logger.warning("Health check: Redis unreachable", error=str(exc))
+        services["redis"] = "error"
 
     # Check Postgres
     try:
@@ -66,19 +60,23 @@ async def health_check() -> HealthResponse:
         await engine.dispose()
         services["postgres"] = "ok"
     except Exception as exc:
-        services["postgres"] = f"error: {exc}"
-    
+        logger.warning("Health check: Postgres unreachable", error=str(exc))
+        services["postgres"] = "error"
+
     # Check Salesforce CRM
     try:
         if all([settings.salesforce_username, settings.salesforce_client_id]):
             from app.integrations.salesforce import get_salesforce_client
             sf_client = get_salesforce_client()
             sf_health = await sf_client.health_check()
-            services["salesforce"] = "ok" if sf_health["status"] == "healthy" else f"error: {sf_health.get('error', 'unhealthy')}"
+            services["salesforce"] = (
+                "ok" if sf_health["status"] == "healthy" else "error"
+            )
         else:
             services["salesforce"] = "not_configured"
     except Exception as exc:
-        services["salesforce"] = f"error: {exc}"
+        logger.warning("Health check: Salesforce unreachable", error=str(exc))
+        services["salesforce"] = "error"
 
     overall = (
         "ok"
@@ -95,7 +93,7 @@ async def health_check() -> HealthResponse:
 
 @router.get("/status", response_model=VectorStoreStatus)
 async def vector_store_status(
-    _: None = Depends(_require_admin),
+    _: str = Depends(require_admin),
 ) -> VectorStoreStatus:
     """Return current document counts per Qdrant collection."""
     writer = VectorStoreWriter()
@@ -118,7 +116,7 @@ _ingest_running = False
 async def trigger_ingestion(
     request: IngestRequest,
     background_tasks: BackgroundTasks,
-    _: None = Depends(_require_admin),
+    _: str = Depends(require_admin),
 ) -> IngestResponse:
     """
     Trigger data ingestion pipeline in the background.

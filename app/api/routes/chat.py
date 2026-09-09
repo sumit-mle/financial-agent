@@ -9,7 +9,7 @@ import json
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from app.agent.graph import FinAgent
@@ -21,6 +21,7 @@ from app.api.schemas import (
     StreamChunk,
 )
 from app.core.logging import get_logger
+from app.core.repository import persist_feedback, persist_turn
 from app.models.dependencies import get_fin_agent
 from app.observability.tracer import get_tracer
 
@@ -32,6 +33,7 @@ tracer = get_tracer()
 @router.post("", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    background_tasks: BackgroundTasks,
     agent: FinAgent = Depends(get_fin_agent),
 ) -> ChatResponse:
     """
@@ -67,6 +69,9 @@ async def chat(
             detail="Agent processing failed. Please try again.",
         )
 
+    # Persist the completed turn after the response is returned (best-effort).
+    background_tasks.add_task(persist_turn, state)
+
     return ChatResponse(
         session_id=state.session_id,
         turn_id=state.turn_id,
@@ -94,7 +99,9 @@ async def chat_stream(
 ) -> StreamingResponse:
     """
     Streaming version of the chat endpoint using Server-Sent Events (SSE).
-    The frontend receives tokens as they're generated.
+
+    Tokens arrive incrementally from the LLM as they are generated.
+    The final 'done' event carries full metadata (intent, confidence, citations…).
     """
     session_id = request.session_id or str(uuid.uuid4())
     history = [
@@ -104,24 +111,33 @@ async def chat_stream(
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
+            # Run the full agent pipeline (safety, retrieval, intent, …) first.
+            # Only the final LLM reasoning step streams tokens to the client.
             state = await agent.run(
                 user_message=request.message,
                 session_id=session_id,
                 customer_id=request.customer_id,
                 conversation_history=history,
+                streaming=True,          # signal the reasoning node to stream
             )
 
-            # Simulate streaming by yielding tokens from the complete response
-            # In production, wire a streaming LLM (streaming=True in llm_factory)
-            words = state.final_response.split(" ")
-            for i, word in enumerate(words):
-                chunk = StreamChunk(
-                    type="token",
-                    content=word + (" " if i < len(words) - 1 else ""),
-                )
+            # If the agent populated a streaming_generator, consume it token by token.
+            stream_gen = getattr(state, "streaming_generator", None)
+            if stream_gen is not None:
+                async for token in stream_gen:
+                    chunk = StreamChunk(type="token", content=token)
+                    yield f"data: {chunk.model_dump_json()}\n\n"
+            else:
+                # Fallback: agent ran non-streaming (e.g. safety short-circuit).
+                # Emit the complete text as a single token so the client still
+                # receives a well-formed stream.
+                chunk = StreamChunk(type="token", content=state.final_response)
                 yield f"data: {chunk.model_dump_json()}\n\n"
 
-            # Final metadata event
+            # Persist after all tokens have been sent (best-effort).
+            await persist_turn(state)
+
+            # Final metadata event.
             done_chunk = StreamChunk(
                 type="done",
                 metadata={
@@ -132,14 +148,19 @@ async def chat_stream(
                     "response_type": state.response_type,
                     "citations": state.citations,
                     "follow_up_suggestions": state.follow_up_suggestions,
+                    "actions_taken": state.actions_taken,
                     "should_escalate": state.should_escalate,
+                    "escalation_reason": state.escalation_reason or None,
                 },
             )
             yield f"data: {done_chunk.model_dump_json()}\n\n"
 
         except Exception as exc:
             logger.error("Streaming error", error=str(exc), session_id=session_id)
-            error_chunk = StreamChunk(type="error", content=str(exc))
+            error_chunk = StreamChunk(
+                type="error",
+                content="Something went wrong while generating a response. Please try again.",
+            )
             yield f"data: {error_chunk.model_dump_json()}\n\n"
 
     return StreamingResponse(
@@ -150,6 +171,7 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
@@ -166,11 +188,20 @@ async def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
             helpful=request.helpful,
             comment=request.comment,
         )
+        # Durably record feedback (Langfuse is best-effort telemetry only).
+        stored = await persist_feedback(
+            session_id=request.session_id,
+            turn_id=request.turn_id,
+            rating=request.rating,
+            helpful=request.helpful,
+            comment=request.comment,
+        )
         logger.info(
             "Feedback received",
             session_id=request.session_id,
             rating=request.rating,
             helpful=request.helpful,
+            stored=stored,
         )
         return FeedbackResponse(accepted=True, message="Thank you for your feedback.")
     except Exception as exc:

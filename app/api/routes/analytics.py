@@ -4,11 +4,12 @@ Analytics API Routes for Financial AI Agent.
 Provides REST endpoints for advanced analytics, quality metrics,
 business intelligence, anomaly detection, and reporting.
 """
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Depends
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 
+from app.api.middleware import require_admin
 from app.analytics.quality_metrics import get_quality_metrics_engine
 from app.analytics.business_intelligence import get_business_intelligence_engine
 from app.analytics.anomaly_detector import get_anomaly_detector
@@ -19,7 +20,11 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+router = APIRouter(
+    prefix="/analytics",
+    tags=["analytics"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 # Pydantic models for API requests
