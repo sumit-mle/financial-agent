@@ -6,7 +6,7 @@ determine if immediate escalation to human agents is needed.
 
 This matches the "Sentiment Model (Emotional)" in Layer 4 of the architecture diagram.
 """
-from typing import Dict, Tuple, List
+from typing import Any, Dict, Tuple, List
 import asyncio
 
 from app.core.logging import get_logger
@@ -104,7 +104,11 @@ class FinancialSentimentAnalyzer:
                 "sentiment-analysis",
                 model=model_name,
                 device=-1,  # CPU inference (set to 0 for GPU)
-                return_all_scores=True
+                # Ask for every label's score. `top_k=None` replaces the old
+                # `return_all_scores=True`, which current transformers versions
+                # no longer honour — leaving the pipeline in single-label mode
+                # and returning a bare dict where a list is expected.
+                top_k=None,
             )
             
             self._initialized = True
@@ -119,8 +123,35 @@ class FinancialSentimentAnalyzer:
             logger.error(f"Failed to initialize sentiment analyzer: {e}")
             self._initialized = "fallback"
     
+    @staticmethod
+    def _normalize_scores(raw: Any) -> List[Dict[str, Any]]:
+        """
+        Flatten a transformers classification output to ``[{label, score}, …]``.
+
+        The pipeline's shape depends on the version and on whether ``top_k`` was
+        honoured: it may hand back a bare dict, a flat list of dicts, or a
+        batch-shaped list-of-lists. Normalizing here keeps ``analyze_sentiment``
+        from indexing into whichever shape it happens to get — the old
+        ``self._model(text)[0]`` produced a *string key* on the bare-dict shape
+        and threw on every single call.
+
+        Returns an empty list when the shape isn't recognized, so the caller
+        raises rather than silently mis-scoring.
+        """
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list) or not raw:
+            return []
+        # Batch shape: [[{...}, {...}]] — unwrap the single input's scores.
+        if isinstance(raw[0], list):
+            raw = raw[0]
+        return [
+            item for item in raw
+            if isinstance(item, dict) and "label" in item and "score" in item
+        ]
+
     def _fallback_analyze(self, text: str) -> SentimentResult:
-        """Fallback keyword-based sentiment analysis."""
+        """Keyword-based sentiment analysis used when the model is unavailable."""
         text_lower = text.lower()
         
         # Count positive/negative/distress keywords
@@ -255,9 +286,12 @@ class FinancialSentimentAnalyzer:
             return self._fallback_analyze(text)
         
         try:
-            # Get base sentiment scores from transformer model
-            sentiment_scores = self._model(text)[0]  # Returns list of {label, score} dicts
-            
+            # Get base sentiment scores from transformer model, normalized to a
+            # flat [{label, score}, …] list regardless of pipeline shape.
+            sentiment_scores = self._normalize_scores(self._model(text))
+            if not sentiment_scores:
+                raise ValueError("sentiment pipeline returned no usable scores")
+
             # Extract overall sentiment
             top_sentiment = max(sentiment_scores, key=lambda x: x["score"])
             overall_sentiment = top_sentiment["label"].lower()
