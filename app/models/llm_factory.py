@@ -64,6 +64,8 @@ def _create_openai(model, temperature, max_tokens, streaming, **kwargs):
         temperature=temperature,
         max_tokens=max_tokens,
         streaming=streaming,
+        timeout=settings.llm_timeout_seconds,
+        max_retries=settings.llm_max_retries,
         **kwargs,
     )
 
@@ -80,6 +82,8 @@ def _create_anthropic(model, temperature, max_tokens, streaming, **kwargs):
         temperature=temperature,
         max_tokens=max_tokens,
         streaming=streaming,
+        timeout=settings.llm_timeout_seconds,
+        max_retries=settings.llm_max_retries,
         **kwargs,
     )
 
@@ -104,6 +108,7 @@ def _create_local(model, temperature, max_tokens, streaming, **kwargs):
         model=_model,
         temperature=temperature,
         num_predict=max_tokens,
+        timeout=settings.llm_timeout_seconds,
         **kwargs,
     )
 
