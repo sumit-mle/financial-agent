@@ -45,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create a non-root user and necessary directories
 RUN useradd -m -u 1000 appuser \
     && mkdir -p /app/data/raw /app/data/processed /app/data/policies /app/.cache \
-    && chown -R appuser:appuser /app /opt/venv
+    && chown -R appuser:appuser /app
 
 # Copy the virtual environment from the builder stage
 COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
@@ -54,7 +54,7 @@ COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 COPY --chown=appuser:appuser app/ ./app/
 COPY --chown=appuser:appuser scripts/ ./scripts/
 COPY --chown=appuser:appuser alembic.ini ./
-COPY --chown=appuser:appuser migrations/ ./migrations/
+COPY --chown=appuser:appuser alembic/ ./alembic/
 
 # Ensure the startup script is executable
 RUN chmod +x /app/scripts/start.sh
