@@ -5,8 +5,13 @@ All values come from environment variables or .env file.
 from functools import lru_cache
 from typing import Any, Literal
 
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Insecure placeholder values shipped as dev defaults. These must never be used
+# when APP_ENV=production — the startup validator below hard-fails on them.
+_INSECURE_SECRET_KEY = "dev-secret-key-change-in-production"
+_INSECURE_ADMIN_TOKEN = "admin-secret-token-change-in-production"
 
 
 class Settings(BaseSettings):
@@ -18,7 +23,9 @@ class Settings(BaseSettings):
     )
 
     # ── App ──────────────────────────────────────────────────────────────────
-    app_env: Literal["development", "staging", "production"] = "development"
+    # "test" is a first-class environment (used by the pytest suite + CI) so that
+    # Settings(app_env="test") and APP_ENV=test validate instead of raising.
+    app_env: Literal["development", "test", "staging", "production"] = "development"
     app_name: str = "fin-ai-agent"
     app_version: str = "0.1.0"
     debug: bool = False
@@ -28,8 +35,10 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_prefix: str = "/api/v1"
-    secret_key: str = Field(default="dev-secret-key-change-in-production")
-    admin_token: str = Field(default="admin-secret-token-change-in-production")
+    secret_key: str = Field(default=_INSECURE_SECRET_KEY)
+    admin_token: str = Field(default=_INSECURE_ADMIN_TOKEN)
+    # Maximum accepted request body size (bytes). Defends against payload DoS.
+    max_request_bytes: int = 262_144  # 256 KiB
     # Accepts both a Python list and a JSON-encoded string from .env
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
@@ -101,6 +110,14 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 10
     context_max_tokens: int = 8000
 
+    # ── Timeouts (seconds) ────────────────────────────────────────────────────
+    # A single LLM call must return within llm_timeout_seconds or it is aborted
+    # (and retried per the provider's max_retries). The whole agent turn is
+    # bounded by agent_timeout_seconds so one request can never hang a worker.
+    llm_timeout_seconds: float = 30.0
+    llm_max_retries: int = 2
+    agent_timeout_seconds: float = 90.0
+
     # ── Action Execution ──────────────────────────────────────────────────────
     
     # MLOps Pipeline Configuration
@@ -129,6 +146,38 @@ class Settings(BaseSettings):
     @property
     def observability_enabled(self) -> bool:
         return bool(self.langfuse_public_key and self.langfuse_secret_key)
+
+    @model_validator(mode="after")
+    def _enforce_production_secrets(self) -> "Settings":
+        """
+        Fail fast at startup if production is running with insecure defaults.
+        This prevents shipping the shared dev SECRET_KEY / ADMIN_TOKEN or the
+        default `postgres:postgres` database credentials into a live deployment.
+        """
+        if self.app_env != "production":
+            return self
+
+        problems: list[str] = []
+        if self.secret_key == _INSECURE_SECRET_KEY or len(self.secret_key) < 32:
+            problems.append(
+                "SECRET_KEY must be overridden with a random value of at least "
+                "32 characters (openssl rand -hex 32)."
+            )
+        if self.admin_token == _INSECURE_ADMIN_TOKEN or len(self.admin_token) < 24:
+            problems.append(
+                "ADMIN_TOKEN must be overridden with a random value of at least "
+                "24 characters."
+            )
+        if "postgres:postgres@" in self.database_url:
+            problems.append(
+                "DATABASE_URL is using the default postgres:postgres credentials."
+            )
+        if problems:
+            raise ValueError(
+                "Insecure production configuration detected:\n  - "
+                + "\n  - ".join(problems)
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

@@ -20,8 +20,6 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from simple_salesforce import Salesforce
-from simple_salesforce.exceptions import SalesforceError
 import requests
 
 from app.core.config import settings
@@ -30,13 +28,35 @@ from app.observability.metrics import record_vector_operation, track_model_infer
 
 logger = get_logger(__name__)
 
+# Salesforce is an *optional* integration (it reports "not_configured" when no
+# credentials are set). Import its SDK defensively so a slim install without
+# simple-salesforce cannot break the import chain that reaches the chat API:
+#   salesforce → actions.connectors → action_node → agent.graph → routes.chat → main
+try:
+    from simple_salesforce import Salesforce, format_soql
+    from simple_salesforce.exceptions import SalesforceError
+
+    SALESFORCE_SDK_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised only in slim installs
+    Salesforce = None  # type: ignore[assignment,misc]
+    format_soql = None  # type: ignore[assignment]
+
+    class SalesforceError(Exception):  # type: ignore[no-redef]
+        """Fallback so `except SalesforceError` stays valid without the SDK."""
+
+    SALESFORCE_SDK_AVAILABLE = False
+    logger.info(
+        "simple-salesforce is not installed — the Salesforce integration is "
+        "disabled. Install it to enable CRM case management."
+    )
+
 class SalesforceClient:
     """
     Production Salesforce client with authentication, error handling, and metrics.
     """
     
     def __init__(self):
-        self.sf: Optional[Salesforce] = None
+        self.sf: Optional["Salesforce"] = None
         self.last_auth_time: Optional[float] = None
         self.auth_expiry_buffer = 300  # Re-auth 5 mins before token expiry
         self._lock = asyncio.Lock()
@@ -44,6 +64,12 @@ class SalesforceClient:
     async def _authenticate(self) -> None:
         """Authenticate with Salesforce using OAuth2."""
         try:
+            if not SALESFORCE_SDK_AVAILABLE:
+                raise RuntimeError(
+                    "simple-salesforce is not installed; cannot authenticate. "
+                    "Install it (see requirements.txt) to use the CRM integration."
+                )
+
             # Use environment variables or settings
             username = getattr(settings, 'salesforce_username', None)
             password = getattr(settings, 'salesforce_password', None)
@@ -98,14 +124,18 @@ class SalesforceClient:
         try:
             loop = asyncio.get_event_loop()
             
-            # Query Account by external customer ID
-            account_query = f"""
-                SELECT Id, Name, AccountNumber, Type, Phone, BillingAddress, 
+            # Query Account by external customer ID.
+            # format_soql safely quotes + escapes the bind value (SOQL injection guard).
+            account_query = format_soql(
+                """
+                SELECT Id, Name, AccountNumber, Type, Phone, BillingAddress,
                        CreatedDate, LastModifiedDate, AccountSource
-                FROM Account 
-                WHERE Customer_ID__c = '{customer_id}' 
+                FROM Account
+                WHERE Customer_ID__c = {}
                 LIMIT 1
-            """
+                """,
+                customer_id,
+            )
             
             account_result = await loop.run_in_executor(
                 None, 
@@ -123,12 +153,15 @@ class SalesforceClient:
             account_id = account['Id']
             
             # Query related contacts
-            contact_query = f"""
+            contact_query = format_soql(
+                """
                 SELECT Id, FirstName, LastName, Email, Phone, MailingAddress
-                FROM Contact 
-                WHERE AccountId = '{account_id}' 
+                FROM Contact
+                WHERE AccountId = {}
                 LIMIT 5
-            """
+                """,
+                account_id,
+            )
             
             contacts = await loop.run_in_executor(
                 None,
@@ -136,13 +169,16 @@ class SalesforceClient:
             )
             
             # Query recent cases for this account
-            case_query = f"""
+            case_query = format_soql(
+                """
                 SELECT Id, CaseNumber, Subject, Status, Priority, CreatedDate, Type
-                FROM Case 
-                WHERE AccountId = '{account_id}' 
-                ORDER BY CreatedDate DESC 
+                FROM Case
+                WHERE AccountId = {}
+                ORDER BY CreatedDate DESC
                 LIMIT 10
-            """
+                """,
+                account_id,
+            )
             
             cases = await loop.run_in_executor(
                 None,
@@ -252,11 +288,14 @@ class SalesforceClient:
             case_id = result['id']
             
             # Query the created case to get case number
-            case_query = f"""
+            case_query = format_soql(
+                """
                 SELECT Id, CaseNumber, Subject, Status, Priority, CreatedDate
-                FROM Case 
-                WHERE Id = '{case_id}'
-            """
+                FROM Case
+                WHERE Id = {}
+                """,
+                case_id,
+            )
             
             case_details = await loop.run_in_executor(
                 None,
@@ -302,14 +341,17 @@ class SalesforceClient:
             loop = asyncio.get_event_loop()
             
             # Query case by case number
-            case_query = f"""
-                SELECT Id, CaseNumber, Subject, Description, Status, Priority, 
+            case_query = format_soql(
+                """
+                SELECT Id, CaseNumber, Subject, Description, Status, Priority,
                        Type, CreatedDate, LastModifiedDate, Owner.Name,
                        Account.Name, Customer_ID__c
-                FROM Case 
-                WHERE CaseNumber = '{case_number}' 
+                FROM Case
+                WHERE CaseNumber = {}
                 LIMIT 1
-            """
+                """,
+                case_number,
+            )
             
             result = await loop.run_in_executor(
                 None,
@@ -327,13 +369,16 @@ class SalesforceClient:
             
             # Get case comments/history
             case_id = case['Id']
-            comment_query = f"""
+            comment_query = format_soql(
+                """
                 SELECT Id, CommentBody, CreatedDate, CreatedBy.Name
-                FROM CaseComment 
-                WHERE ParentId = '{case_id}' 
-                ORDER BY CreatedDate DESC 
+                FROM CaseComment
+                WHERE ParentId = {}
+                ORDER BY CreatedDate DESC
                 LIMIT 5
-            """
+                """,
+                case_id,
+            )
             
             comments = await loop.run_in_executor(
                 None,

@@ -1,51 +1,73 @@
 # =============================================================================
 # Fin AI Agent — Backend Dockerfile
-# Base: python:3.11-slim  (langgraph + langchain require 3.11, not 3.12+)
-# Install: from requirements.txt directly — no build tool needed
+# Multi-stage build for minimal production footprint and tight security.
 # =============================================================================
 
-FROM python:3.11-slim
+# ── Stage 1: Builder ──────────────────────────────────────────────────────────
+FROM python:3.11.9-slim-bookworm AS builder
 
-WORKDIR /app
+# Stop Python from writing .pyc files and enable unbuffered output
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# ── System deps ───────────────────────────────────────────────────────────────
+WORKDIR /build
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl \
         build-essential \
         libgomp1 \
         git \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python deps ───────────────────────────────────────────────────────────────
-# Copy requirements first — Docker cache skips this layer when only app/ changes
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    # Install reranker separately (pulls onnxruntime — cached after first build)
-    && pip install --no-cache-dir "flashrank==0.2.9"
+# Create a virtual environment and install dependencies there
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --upgrade pip \
+    && /opt/venv/bin/pip install -r requirements.txt \
+    && /opt/venv/bin/pip install "flashrank==0.2.9"
 
-# ── App source ────────────────────────────────────────────────────────────────
-COPY app/ ./app/
-COPY scripts/ ./scripts/
-COPY alembic.ini ./
-COPY migrations/ ./migrations/
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+FROM python:3.11.9-slim-bookworm
 
-# ── Data + cache dirs ─────────────────────────────────────────────────────────
-RUN mkdir -p /app/data/raw /app/data/processed /app/data/policies /app/.cache
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
 
-# ── Make startup script executable ───────────────────────────────────────────
+WORKDIR /app
+
+# Install minimal runtime system dependencies (libgomp1 is needed by ONNX/FlashRank)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user and necessary directories
+RUN useradd -m -u 1000 appuser \
+    && mkdir -p /app/data/raw /app/data/processed /app/data/policies /app/.cache \
+    && chown -R appuser:appuser /app /opt/venv
+
+# Copy the virtual environment from the builder stage
+COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
+
+# Copy application source code
+COPY --chown=appuser:appuser app/ ./app/
+COPY --chown=appuser:appuser scripts/ ./scripts/
+COPY --chown=appuser:appuser alembic.ini ./
+COPY --chown=appuser:appuser migrations/ ./migrations/
+
+# Ensure the startup script is executable
 RUN chmod +x /app/scripts/start.sh
 
-# ── Non-root user for security ────────────────────────────────────────────────
-RUN useradd -m -u 1000 appuser \
-    && chown -R appuser:appuser /app
+# Run as non-root user
 USER appuser
 
-# ── Health check ──────────────────────────────────────────────────────────────
+# Health check
 HEALTHCHECK --interval=15s --timeout=10s --start-period=60s --retries=5 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 EXPOSE 8000
 
-# ── Start via script (waits for services + seeds data + starts uvicorn) ───────
+# Start via script (waits for services + seeds data + starts uvicorn)
 CMD ["/app/scripts/start.sh"]
+

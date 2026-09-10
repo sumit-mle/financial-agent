@@ -1,0 +1,278 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Test Business Dashboard",
+    "description": "High-level business metrics for Financial AI Agent",
+    "tags": [
+      "business",
+      "overview",
+      "kpi"
+    ],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Total Requests",
+        "type": "stat",
+        "description": "Requests per second across all agents",
+        "targets": [
+          {
+            "expr": "sum(rate(agent_requests_total[5m]))",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "drawStyle": "line"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 10
+                },
+                {
+                  "color": "red",
+                  "value": 50
+                }
+              ]
+            },
+            "unit": "reqps",
+            "mappings": []
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Success Rate",
+        "type": "stat",
+        "description": "Percentage of successful requests",
+        "targets": [
+          {
+            "expr": "sum(rate(agent_requests_total{outcome=\"success\"}[5m])) / sum(rate(agent_requests_total[5m])) * 100",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "drawStyle": "line"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 95
+                },
+                {
+                  "color": "green",
+                  "value": 99
+                }
+              ]
+            },
+            "unit": "percent",
+            "mappings": []
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Customer Satisfaction",
+        "type": "stat",
+        "description": "Average customer satisfaction rating",
+        "targets": [
+          {
+            "expr": "avg(customer_satisfaction_rating)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "drawStyle": "line"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 3.5
+                },
+                {
+                  "color": "green",
+                  "value": 4.0
+                }
+              ]
+            },
+            "unit": "short",
+            "mappings": []
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        }
+      },
+      {
+        "id": 4,
+        "title": "Escalation Rate",
+        "type": "stat",
+        "description": "Percentage of requests escalated to humans",
+        "targets": [
+          {
+            "expr": "sum(rate(agent_requests_total{escalated=\"true\"}[5m])) / sum(rate(agent_requests_total[5m])) * 100",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "drawStyle": "line"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 5
+                },
+                {
+                  "color": "red",
+                  "value": 15
+                }
+              ]
+            },
+            "unit": "percent",
+            "mappings": []
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        }
+      },
+      {
+        "id": 5,
+        "title": "Request Volume by Intent",
+        "type": "timeseries",
+        "description": "Request volume over time by detected intent",
+        "targets": [
+          {
+            "expr": "sum(rate(agent_requests_total[5m])) by (intent)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "barAlignment": 0,
+              "lineWidth": 1,
+              "fillOpacity": 0.1,
+              "gradientMode": "none",
+              "spanNulls": false,
+              "insertNulls": false,
+              "showPoints": "auto",
+              "pointSize": 5
+            },
+            "thresholds": {
+              "steps": []
+            }
+          }
+        },
+        "gridPos": {
+          "h": 10,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 6,
+        "title": "Response Time Distribution",
+        "type": "heatmap",
+        "description": "Distribution of response times",
+        "targets": [
+          {
+            "expr": "rate(agent_response_time_seconds_bucket[5m])",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "drawStyle": "line"
+            },
+            "thresholds": {
+              "steps": []
+            },
+            "unit": "s"
+          }
+        },
+        "gridPos": {
+          "h": 10,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      }
+    ],
+    "schemaVersion": 30,
+    "version": 1
+  }
+}

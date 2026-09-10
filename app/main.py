@@ -14,9 +14,11 @@ Prod: /app/scripts/start.sh  (inside Docker)
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -97,6 +99,40 @@ app.include_router(admin_router, prefix=settings.api_prefix)
 app.include_router(experiments_router, prefix=f"{settings.api_prefix}/admin")
 app.include_router(mlops_router, prefix=f"{settings.api_prefix}/admin")
 app.include_router(analytics_router, prefix=f"{settings.api_prefix}/admin")
+
+
+# ── Exception handlers ────────────────────────────────────────────────────────
+# Preserve FastAPI's normal 4xx behaviour, but ensure any *unhandled* exception
+# returns a sanitized 500 (no stack traces / internal detail leaked to clients).
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = request.headers.get("X-Request-ID", "unknown")
+    logger.error(
+        "Unhandled exception",
+        path=request.url.path,
+        method=request.method,
+        request_id=request_id,
+        error=str(exc),
+        error_type=type(exc).__name__,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An internal error occurred. Please try again later.",
+            "request_id": request_id,
+        },
+    )
 
 
 # ── Root + Health ─────────────────────────────────────────────────────────────

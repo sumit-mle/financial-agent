@@ -1,0 +1,83 @@
+groups:
+  - name: financial_ai_alerts
+    rules:
+
+      # ── Latency ────────────────────────────────────────────────────────────
+      - alert: HighResponseTime
+        # agent_response_time_seconds is the Histogram defined in observability/metrics.py
+        expr: histogram_quantile(0.95, rate(agent_response_time_seconds_bucket[5m])) > 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High agent response time"
+          description: "95th-percentile response time is {{ $value | humanizeDuration }}"
+
+      # ── Error / escalation rates ───────────────────────────────────────────
+      - alert: HighErrorRate
+        # agent_requests_total labels: intent, response_type, escalated
+        expr: >
+          rate(agent_requests_total{escalated="true"}[5m])
+          /
+          rate(agent_requests_total[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High escalation / error rate"
+          description: "{{ $value | humanizePercentage }} of requests are being escalated"
+
+      - alert: HighEscalationRate
+        # agent_escalation_total labels: reason, model_type
+        expr: rate(agent_escalation_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High escalation rate"
+          description: "Escalations are firing at {{ $value }}/s"
+
+      # ── Confidence ────────────────────────────────────────────────────────
+      - alert: LowConfidenceResponses
+        # agent_response_confidence is a Histogram; use _bucket to detect the
+        # fraction of observations below 0.5
+        expr: >
+          rate(agent_response_confidence_bucket{le="0.5"}[5m])
+          /
+          rate(agent_response_confidence_count[5m]) > 0.2
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate of low-confidence responses"
+          description: "{{ $value | humanizePercentage }} of responses have confidence ≤ 0.5"
+
+      # ── Safety ────────────────────────────────────────────────────────────
+      - alert: SafetyViolationSpike
+        # safety_violations labels: violation_type, model_type
+        expr: rate(safety_violations_total[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Safety violation spike"
+          description: "Safety violations firing at {{ $value }}/s"
+
+      # ── Infrastructure ────────────────────────────────────────────────────
+      - alert: QdrantDown
+        expr: up{job="qdrant"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Qdrant vector database is down"
+          description: "Qdrant has been unreachable for more than 30 seconds"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis is down"
+          description: "Rate limiting and caching will degrade gracefully, but Redis has been down for 30s"
