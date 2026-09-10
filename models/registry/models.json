@@ -1,0 +1,114 @@
+{
+  "models": [
+    {
+      "model_id": "sentiment_classifier_1.0.0_1788484969",
+      "model_type": "sentiment_classifier",
+      "version": "1.0.0",
+      "stage": "development",
+      "created_by": "mlops_pipeline",
+      "created_at": "2026-09-04T06:52:49.594372",
+      "model_path": "/models/sentiment_v1.pkl",
+      "config_path": null,
+      "requirements_path": null,
+      "training_metrics": {
+        "accuracy": 0.85,
+        "precision": 0.83,
+        "recall": 0.87,
+        "f1_score": 0.85
+      },
+      "validation_metrics": {
+        "accuracy": 0.85,
+        "user_satisfaction": 0.82,
+        "response_time": 1.2
+      },
+      "production_metrics": {},
+      "deployment_strategy": null,
+      "deployment_config": {},
+      "deployed_at": null,
+      "traffic_percentage": 0.0,
+      "description": "Initial sentiment classification model",
+      "tags": [],
+      "hyperparameters": {},
+      "training_dataset": null,
+      "validation_dataset": null,
+      "parent_model_id": null,
+      "derived_models": []
+    },
+    {
+      "model_id": "test_model_1.0.0_1788485165",
+      "model_type": "test_model",
+      "version": "1.0.0",
+      "stage": "development",
+      "created_by": "mlops_pipeline",
+      "created_at": "2026-09-04T06:56:05.203882",
+      "model_path": "/test/path",
+      "config_path": null,
+      "requirements_path": null,
+      "training_metrics": {},
+      "validation_metrics": {},
+      "production_metrics": {},
+      "deployment_strategy": null,
+      "deployment_config": {},
+      "deployed_at": null,
+      "traffic_percentage": 0.0,
+      "description": "Test model for persistence fix",
+      "tags": [],
+      "hyperparameters": {},
+      "training_dataset": null,
+      "validation_dataset": null,
+      "parent_model_id": null,
+      "derived_models": []
+    },
+    {
+      "model_id": "quick_test_model_1.0.0_1788485640",
+      "model_type": "quick_test_model",
+      "version": "1.0.0",
+      "stage": "production",
+      "created_by": "mlops_pipeline",
+      "created_at": "2026-09-04T07:04:00.860576",
+      "model_path": "/test/model.pkl",
+      "config_path": null,
+      "requirements_path": null,
+      "training_metrics": {
+        "accuracy": 0.85,
+        "precision": 0.83,
+        "recall": 0.87
+      },
+      "validation_metrics": {
+        "accuracy": 0.85,
+        "user_satisfaction": 0.82
+      },
+      "production_metrics": {},
+      "deployment_strategy": "blue_green",
+      "deployment_config": {},
+      "deployed_at": "2026-09-04T07:04:06.940963",
+      "traffic_percentage": 100.0,
+      "description": "",
+      "tags": [],
+      "hyperparameters": {},
+      "training_dataset": null,
+      "validation_dataset": null,
+      "parent_model_id": null,
+      "derived_models": []
+    }
+  ],
+  "deployments": [
+    {
+      "deployment_id": "deploy_quick_test_model_1.0.0_1788485640_1788485640",
+      "model_id": "quick_test_model_1.0.0_1788485640",
+      "model_version": "1.0.0",
+      "strategy": "blue_green",
+      "target_stage": "production",
+      "traffic_percentage": 100.0,
+      "deployed_at": "2026-09-04T07:04:00.888666",
+      "deployed_by": "mlops_pipeline",
+      "rollback_model_id": null,
+      "deployment_notes": "",
+      "health_check_passed": true,
+      "performance_validation_passed": true,
+      "rolled_back_at": null,
+      "rollback_reason": null
+    }
+  ],
+  "last_updated": "2026-09-04T07:04:06.941426"
+}
