@@ -354,15 +354,21 @@ class TestFeedbackCollector:
         with patch.object(collector, '_aggregate_performance_metrics', side_effect=Exception("Test error")):
             with patch('app.mlops.feedback_collector.logger') as mock_logger:
                 collector._running = True
-                
-                # Run one iteration with error
-                try:
+
+                def stop_after_first_retry(_seconds):
+                    # The production loop retries after a delay. Stop the test
+                    # after that first retry so the test exercises exactly one
+                    # failed iteration without sleeping for 60 seconds.
+                    collector._running = False
+
+                with patch(
+                    "app.mlops.feedback_collector.asyncio.sleep",
+                    side_effect=stop_after_first_retry,
+                ):
                     await collector._aggregation_loop()
-                except:
-                    pass  # Expected to exit due to error
-                
+
                 # Should log error
-                mock_logger.error.assert_called()
+                mock_logger.error.assert_called_once()
 
 
 @pytest.mark.models
