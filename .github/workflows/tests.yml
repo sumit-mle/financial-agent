@@ -1,0 +1,195 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Quoted so YAML keeps them as strings — bare 3.10 would parse as the
+        # float 3.1 and resolve to the wrong interpreter.
+        python-version: ["3.11", "3.12"]
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: finai123
+          POSTGRES_USER: finai
+          POSTGRES_DB: finai_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7.4-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+      
+      qdrant:
+        image: qdrant/qdrant:v1.11.3
+        ports:
+          - 6333:6333
+        options: >-
+          --health-cmd "curl -f http://localhost:6333/health"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 3
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        # pytest-timeout guards against a hung test wedging the whole job.
+        pip install pytest-timeout
+    
+    - name: Set up test environment
+      env:
+        DATABASE_URL: postgresql+asyncpg://finai:finai123@localhost:5432/finai_test
+        REDIS_URL: redis://localhost:6379/1
+        QDRANT_URL: http://localhost:6333
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        SECRET_KEY: test-secret-key-for-ci-testing-only
+        APP_ENV: test
+      run: |
+        echo "DATABASE_URL=$DATABASE_URL" >> $GITHUB_ENV
+        echo "REDIS_URL=$REDIS_URL" >> $GITHUB_ENV
+        echo "QDRANT_URL=$QDRANT_URL" >> $GITHUB_ENV
+        echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> $GITHUB_ENV
+        echo "SECRET_KEY=$SECRET_KEY" >> $GITHUB_ENV
+        echo "APP_ENV=$APP_ENV" >> $GITHUB_ENV
+    
+    - name: Wait for services
+      run: |
+        # Wait for services to be ready
+        for i in {1..30}; do
+          if curl -f http://localhost:6333/collections; then
+            echo "Qdrant is ready"
+            break
+          fi
+          echo "Waiting for Qdrant... ($i/30)"
+          sleep 2
+        done
+        
+        # Test Redis
+        redis-cli -h localhost ping
+        
+        # Test PostgreSQL
+        pg_isready -h localhost -U finai
+    
+    - name: Run test suite
+      # One full-suite run. The previous three marker-split steps (-m unit /
+      # integration / models) silently skipped most of the suite, because only a
+      # handful of tests carry those markers.
+      env:
+        # Keep model backends offline so a test can never block on a multi-GB
+        # HuggingFace download; the specialized models degrade to their
+        # deterministic keyword/regex fallbacks.
+        TRANSFORMERS_OFFLINE: "1"
+        HF_HUB_OFFLINE: "1"
+      run: |
+        python -m pytest tests/ \
+          --cov=app --cov-report=xml --cov-report=term-missing \
+          --timeout=120 -v
+
+    - name: Upload coverage to Codecov
+      if: matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install linting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install black flake8 mypy isort
+
+    # These are advisory: the codebase predates the formatters, so a blocking
+    # gate would fail every PR on pre-existing formatting rather than on the
+    # change under review. Flip continue-on-error off once the tree is clean.
+    - name: Run Black
+      continue-on-error: true
+      run: black --check --diff app/ tests/
+
+    - name: Run isort
+      continue-on-error: true
+      run: isort --check-only --diff app/ tests/
+
+    - name: Run Flake8
+      continue-on-error: true
+      run: flake8 app/ tests/ --max-line-length=88 --extend-ignore=E203,W503
+
+    - name: Run MyPy
+      continue-on-error: true
+      run: mypy app/ --ignore-missing-imports
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install security tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install bandit safety
+    
+    - name: Run Bandit security linter
+      run: bandit -r app/ -f json -o bandit-report.json || true
+    
+    - name: Run Safety check
+      run: safety check --json --output safety-report.json || true
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
