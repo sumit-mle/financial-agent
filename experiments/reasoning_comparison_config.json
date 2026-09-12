@@ -1,0 +1,63 @@
+{
+  "name": "Chain-of-Thought Reasoning Experiment",
+  "description": "Compare direct responses vs. chain-of-thought reasoning for complex financial questions",
+  "experiment_type": "prompt",
+  "target_intent": null,
+  "traffic_split": 0.15,
+  "duration_days": 21,
+  "variants": {
+    "direct": {
+      "system_prompt": "You are Fin, a financial AI assistant. Provide clear, concise answers to customer questions about banking and financial services.",
+      "reasoning_prompt": "Provide a direct, well-structured response to the customer's question using the available context.",
+      "response_template": "{response}\n\nIs there anything else I can help you with today?",
+      "model_params": {
+        "temperature": 0.6
+      },
+      "use_chain_of_thought": false,
+      "max_tokens": 400,
+      "temperature": 0.6,
+      "examples": []
+    },
+    "chain_of_thought": {
+      "system_prompt": "You are Fin, a financial AI assistant. Think through each customer question step by step to provide the most accurate and comprehensive response possible.",
+      "reasoning_prompt": "Let me work through this step by step:\n1. What is the customer specifically asking?\n2. What key information do I need to address?\n3. Are there any important considerations or warnings?\n4. What's the most helpful way to structure my response?\n\nBased on this analysis, here's my response:",
+      "response_template": "Let me help you understand {topic}.\n\n{response}\n\nI hope this explanation helps clarify things for you. What other questions do you have?",
+      "model_params": {
+        "temperature": 0.5
+      },
+      "use_chain_of_thought": true,
+      "max_tokens": 700,
+      "temperature": 0.5,
+      "examples": [
+        "For complex questions, break down the problem into logical steps before providing the answer.",
+        "Consider multiple aspects of financial questions: regulatory requirements, customer impact, and practical next steps."
+      ]
+    }
+  },
+  "metrics": [
+    {
+      "name": "response_accuracy",
+      "type": "numeric", 
+      "description": "Accuracy of the response based on expert review",
+      "higher_is_better": true
+    },
+    {
+      "name": "user_satisfaction",
+      "type": "conversion",
+      "description": "User satisfaction with response quality",
+      "higher_is_better": true
+    },
+    {
+      "name": "response_time",
+      "type": "duration",
+      "description": "Time to generate response",
+      "higher_is_better": false
+    },
+    {
+      "name": "completeness_score",
+      "type": "numeric",
+      "description": "How complete/comprehensive the response is (1-5)",
+      "higher_is_better": true
+    }
+  ]
+}

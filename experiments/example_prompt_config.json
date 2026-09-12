@@ -1,0 +1,57 @@
+{
+  "name": "Customer Empathy Experiment",
+  "description": "Test the impact of empathetic language on customer satisfaction and escalation rates",
+  "experiment_type": "prompt",
+  "target_intent": null,
+  "traffic_split": 0.2,
+  "duration_days": 14,
+  "variants": {
+    "control": {
+      "system_prompt": "You are Fin, a helpful financial AI assistant. Provide accurate, professional responses about banking and financial services.",
+      "reasoning_prompt": "Analyze the customer's question and provide a clear, direct response with relevant information.",
+      "response_template": "Based on your question about {topic}, here's what I can help with:\n\n{response}\n\n{follow_up}",
+      "model_params": {
+        "temperature": 0.7
+      },
+      "use_chain_of_thought": false,
+      "max_tokens": 500,
+      "temperature": 0.7,
+      "examples": []
+    },
+    "empathetic": {
+      "system_prompt": "You are Fin, a caring and empathetic financial AI assistant. You understand that financial issues can be stressful and deeply personal. Always respond with warmth, understanding, and genuine care for the customer's situation while providing helpful information.",
+      "reasoning_prompt": "Consider the customer's potential stress level and emotional state. Craft a response that is both informative and emotionally supportive, acknowledging their concerns with empathy.",
+      "response_template": "I understand this situation might be concerning for you. Let me help you with {topic}.\n\n{response}\n\nI'm here to support you through this. {follow_up}",
+      "model_params": {
+        "temperature": 0.8
+      },
+      "use_chain_of_thought": true,
+      "max_tokens": 600,
+      "temperature": 0.8,
+      "examples": [
+        "Customer: I'm worried about my account security.\nResponse: I completely understand your concern about account security - it's something we all want to feel confident about.",
+        "Customer: I can't afford this fee.\nResponse: I hear how frustrating this fee must be for you, especially when finances are tight."
+      ]
+    }
+  },
+  "metrics": [
+    {
+      "name": "user_satisfaction",
+      "type": "conversion",
+      "description": "Whether the user found the response helpful",
+      "higher_is_better": true
+    },
+    {
+      "name": "escalation_rate", 
+      "type": "conversion",
+      "description": "Rate of escalation to human agents",
+      "higher_is_better": false
+    },
+    {
+      "name": "response_quality",
+      "type": "numeric",
+      "description": "Response quality score from 1-5",
+      "higher_is_better": true
+    }
+  ]
+}
