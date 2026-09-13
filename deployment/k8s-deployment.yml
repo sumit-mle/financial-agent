@@ -1,0 +1,43 @@
+﻿apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: financial-agent
+  labels:
+    app: financial-agent
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: financial-agent
+  template:
+    metadata:
+      labels:
+        app: financial-agent
+    spec:
+      containers:
+      - name: financial-agent
+        image: financial-agent:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: financial-agent-service
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8000
+  selector:
+    app: financial-agent
