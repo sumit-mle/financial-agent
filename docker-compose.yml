@@ -128,4 +128,3 @@ volumes:
 networks:
   default:
     name: fin-ai-network
-    external: true

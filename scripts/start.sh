@@ -62,15 +62,15 @@ except Exception:
 echo "  complaints collection: ${COMPLAINT_COUNT} vectors"
 
 if [ "${COMPLAINT_COUNT}" = "0" ] && [ "${SKIP_INGEST:-false}" != "true" ]; then
-    if [ -z "${OPENAI_API_KEY:-}" ] || [ "${OPENAI_API_KEY}" = "sk-...your-key-here..." ]; then
-        echo "  ⚠ OPENAI_API_KEY not set — skipping ingestion. Set it in .env to enable."
+    if [ -z "${OPENAI_API_KEY:-}" ] || [ "${OPENAI_API_KEY}" = "sk-...your-key-here..." ] || [ "${OPENAI_API_KEY}" = "sk-proj-your-api-key-here-min-48-chars-required" ]; then
+        echo "  ⚠ OPENAI_API_KEY not set or is placeholder — skipping ingestion. Set it in .env to enable."
     else
-        echo "▶ Running sample ingestion (CFPB 5K + policy PDFs)..."
-        python -m app.ingestion.pipeline --source cfpb --sample --provider openai 2>&1 \
-            || echo "  ⚠ CFPB ingest failed"
-        python -m app.ingestion.pipeline --source policy --provider openai 2>&1 \
-            || echo "  ⚠ Policy ingest failed"
-        echo "  ✓ Ingestion complete"
+        echo "▶ Running sample ingestion with 30-minute timeout (CFPB 5K + policy PDFs)..."
+        timeout 1800 python -m app.ingestion.pipeline --source cfpb --sample --provider openai 2>&1 \
+            || { echo "  ⚠ CFPB ingest failed or timed out"; true; }
+        timeout 1800 python -m app.ingestion.pipeline --source policy --provider openai 2>&1 \
+            || { echo "  ⚠ Policy ingest failed or timed out"; true; }
+        echo "  ✓ Ingestion complete (or timed out gracefully)"
     fi
 else
     echo "  ✓ Skipping ingest (${COMPLAINT_COUNT} vectors already loaded or SKIP_INGEST=true)"
