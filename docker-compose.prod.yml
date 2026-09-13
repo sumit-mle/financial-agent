@@ -1,62 +1,41 @@
-# docker-compose.prod.yml — Production configuration
-# Optimized builds, no dev tools, production-grade settings
-#
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
-# =============================================================================
-
+﻿version: '3.8'
 services:
-
-  api:
+  financial-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: financial-agent:latest
+    ports:
+      - "8000:8000"
     environment:
-      APP_ENV: production
-      DEBUG: "false"
-      LOG_LEVEL: info
-    # Remove source mounts — use baked-in image only
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
     volumes:
       - ./data:/app/data
-      - ./.cache:/app/.cache
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 4G
-        reservations:
-          cpus: '0.5'
-          memory: 1G
+      - ./models:/app/models
     restart: always
+    networks:
+      - prod-network
 
-  frontend:
-    # Force production Dockerfile (nginx-based)
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_URL: https://api.fin-ai.local/api/v1
-    # Map to standard port 3000
-    ports:
-      - "3000:80"
-    # Remove dev volumes
-    volumes: []
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: financial_agent
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     restart: always
+    networks:
+      - prod-network
 
   redis:
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
+    image: redis:7-alpine
     restart: always
+    networks:
+      - prod-network
 
-  qdrant:
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 4G
-    restart: always
+networks:
+  prod-network:
 
+volumes:
+  postgres_data:
