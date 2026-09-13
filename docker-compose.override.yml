@@ -24,14 +24,8 @@ services:
       - /app/scripts/start.sh
 
   frontend:
-    # In dev, run vite dev server instead of nginx so HMR works
+    # Use the production Dockerfile (nginx serving built React app)
     build:
       context: ./frontend
-      dockerfile: Dockerfile.dev
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
-    environment:
-      VITE_API_URL: http://localhost:8000/api/v1
+      dockerfile: Dockerfile
+    # No volume mounts — static build is final

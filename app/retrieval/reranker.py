@@ -54,10 +54,16 @@ class Reranker:
         Model: ms-marco-MiniLM-L-12-v2 (downloaded on first use, ~33MB)
         """
         try:
+            import os
             from flashrank import Ranker  # type: ignore[import]
+            
+            # Use /tmp for cache to avoid permission issues with app directory
+            cache_dir = os.path.expanduser("~/.cache/flashrank")
+            os.makedirs(cache_dir, exist_ok=True)
+            
             self._model = Ranker(
                 model_name="ms-marco-MiniLM-L-12-v2",
-                cache_dir=".cache/flashrank",
+                cache_dir=cache_dir,
             )
         except ImportError:
             logger.warning(
