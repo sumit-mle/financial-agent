@@ -81,11 +81,11 @@ services:
       CRM_API_URL: http://localhost:9001/mock/crm
       TICKETING_API_URL: http://localhost:9001/mock/tickets
       NOTIFICATION_API_URL: http://localhost:9001/mock/notify
-      CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
+      CORS_ORIGINS: '["http://localhost:3001","http://localhost:5173"]'
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      - "8080:8000"
     depends_on:
       qdrant:
         condition: service_started   # no healthcheck on qdrant — start.sh waits
@@ -110,11 +110,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: http://localhost:8000/api/v1
+        VITE_API_URL: http://localhost:8080/api/v1
     image: fin-ai-agent-frontend:latest
     container_name: fin_frontend
     ports:
-      - "3000:80"          # nginx inside listens on 80, mapped to host 3000
+      - "3001:80"          # nginx inside listens on 80, mapped to host 3001
     depends_on:
       api:
         condition: service_healthy
