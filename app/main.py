@@ -147,6 +147,7 @@ async def root():
         ),
         "version": settings.app_version,
         "status": "ready",
+        "environment": settings.app_env,
         "features": [
             "Intent-aware customer support",
             "Grounded answers with citations",
@@ -159,6 +160,7 @@ async def root():
             "stream": f"{settings.api_prefix}/chat/stream",
             "feedback": f"{settings.api_prefix}/chat/feedback",
             "health": "/health",
+            "metrics": "/metrics",
             "docs": "/docs",
         },
     })

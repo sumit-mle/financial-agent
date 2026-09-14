@@ -24,10 +24,13 @@ class TestChatEndpoint:
         data = resp.json()
         assert data["name"] == "Fin AI Agent"
         assert data["tagline"]
+        assert data["status"] == "ready"
+        assert data["environment"]
         assert "features" in data
         assert isinstance(data["features"], list)
         assert data["features"]
         assert "/api/v1/chat" in data["api"]["chat"]
+        assert "/metrics" in data["api"]["metrics"]
 
     async def test_chat_success(self, test_client: AsyncClient, fake_agent):
         fake_agent.next_state = make_agent_state(
