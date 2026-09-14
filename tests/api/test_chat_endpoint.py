@@ -17,6 +17,18 @@ from tests.conftest import make_agent_state
 class TestChatEndpoint:
     """HTTP contract tests for the chat routes."""
 
+    async def test_root_returns_product_overview(self, test_client: AsyncClient):
+        resp = await test_client.get("/")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "Fin AI Agent"
+        assert data["tagline"]
+        assert "features" in data
+        assert isinstance(data["features"], list)
+        assert data["features"]
+        assert "/api/v1/chat" in data["api"]["chat"]
+
     async def test_chat_success(self, test_client: AsyncClient, fake_agent):
         fake_agent.next_state = make_agent_state(
             final_response="I can help you check your account balance.",

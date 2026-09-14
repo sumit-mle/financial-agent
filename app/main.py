@@ -139,11 +139,28 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.get("/", include_in_schema=False)
 async def root():
     return JSONResponse({
-        "name": settings.app_name,
+        "name": "Fin AI Agent",
+        "tagline": "AI-powered financial support and operations assistant",
+        "description": (
+            "A full-stack financial AI product for grounded customer support, "
+            "risk controls, RAG-backed answers, and workflow automation."
+        ),
         "version": settings.app_version,
-        "docs": "/docs",
-        "health": "/health",
-        "chat": f"{settings.api_prefix}/chat",
+        "status": "ready",
+        "features": [
+            "Intent-aware customer support",
+            "Grounded answers with citations",
+            "Safety checks and escalation workflows",
+            "Conversation history and feedback tracking",
+            "Operational analytics and admin tooling",
+        ],
+        "api": {
+            "chat": f"{settings.api_prefix}/chat",
+            "stream": f"{settings.api_prefix}/chat/stream",
+            "feedback": f"{settings.api_prefix}/chat/feedback",
+            "health": "/health",
+            "docs": "/docs",
+        },
     })
 
 
