@@ -176,7 +176,8 @@ class GuardrailModels:
             if match:
                 parsed = json.loads(match.group(0))
                 score = float(parsed.get("score", 0.5))
-                passed = bool(parsed.get("passed", score >= cfg["threshold"]))
+                score = max(0.0, min(1.0, score))
+                passed = score >= cfg["threshold"]
                 reason = str(parsed.get("reason", ""))
                 return GuardrailResult(
                     score=score,
