@@ -39,14 +39,6 @@ async def lifespan(app: FastAPI):
         qdrant_url=settings.qdrant_url,
     )
 
-    # Initialize Prometheus metrics
-    try:
-        instrumentator = Instrumentator()
-        instrumentator.instrument(app).expose(app)
-        logger.info("✓ Prometheus metrics initialized")
-    except Exception as exc:
-        logger.warning("Metrics initialization failed", error=str(exc))
-
     # Warm up singletons — deferred import so startup never crashes
     try:
         from app.models.dependencies import get_fin_agent, get_rag_pipeline
@@ -82,6 +74,14 @@ app = FastAPI(
     redoc_url="/redoc" if not settings.is_production else None,
     lifespan=lifespan,
 )
+
+# Instrument the application before the ASGI server starts. Adding middleware
+# from the lifespan hook is too late for newer Starlette/FastAPI versions.
+try:
+    Instrumentator().instrument(app).expose(app)
+    logger.info("✓ Prometheus metrics initialized")
+except Exception as exc:
+    logger.warning("Metrics initialization failed", error=str(exc))
 
 # ── Middleware ────────────────────────────────────────────────────────────────
 from app.api.middleware import register_middleware  # noqa: E402
