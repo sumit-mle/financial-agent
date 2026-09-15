@@ -49,6 +49,13 @@ class MultiCollectionRetriever:
         )
         self.embedder = embedder or Embedder()
         self.top_k = top_k or settings.retrieval_top_k
+        self._available_collections: set[str] | None = None
+        try:
+            collections = self._client.get_collections().collections
+            self._available_collections = {collection.name for collection in collections}
+        except Exception as exc:
+            # Keep startup resilient when Qdrant is still coming up or offline.
+            logger.warning("Could not inspect Qdrant collections", error=str(exc))
         logger.info("Retriever initialized", top_k=self.top_k)
 
     def _build_filter(
@@ -85,14 +92,28 @@ class MultiCollectionRetriever:
     ) -> list[RetrievedChunk]:
         """Search a single Qdrant collection."""
         try:
-            results = self._client.search(
-                collection_name=collection_name,
-                query_vector=query_vector,
-                limit=top_k,
-                query_filter=self._build_filter(filters),
-                with_payload=True,
-                score_threshold=0.30,  # Drop irrelevant results early
-            )
+            query_filter = self._build_filter(filters)
+            if hasattr(self._client, "query_points"):
+                # qdrant-client 1.19 removed the legacy `search` method.
+                response = self._client.query_points(
+                    collection_name=collection_name,
+                    query=query_vector,
+                    limit=top_k,
+                    query_filter=query_filter,
+                    with_payload=True,
+                    score_threshold=0.30,  # Drop irrelevant results early
+                )
+                results = response.points
+            else:
+                # Keep compatibility with qdrant-client versions before 1.19.
+                results = self._client.search(
+                    collection_name=collection_name,
+                    query_vector=query_vector,
+                    limit=top_k,
+                    query_filter=query_filter,
+                    with_payload=True,
+                    score_threshold=0.30,  # Drop irrelevant results early
+                )
         except Exception as exc:
             # Collection may not exist yet (not yet ingested)
             logger.warning(
@@ -142,6 +163,13 @@ class MultiCollectionRetriever:
             search_plan = {collection_override: self.top_k}
         else:
             search_plan = COLLECTION_TOP_K
+
+        if self._available_collections is not None:
+            search_plan = {
+                collection: top_k
+                for collection, top_k in search_plan.items()
+                if collection in self._available_collections
+            }
 
         # Search all collections in parallel (sequential here; parallelise
         # with concurrent.futures if latency becomes a concern)
