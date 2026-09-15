@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 import asyncio
 from pathlib import Path
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -79,6 +80,11 @@ class AdvancedPIIDetector:
     async def _initialize(self):
         """Lazy initialization of Presidio components."""
         if self._initialized:
+            return
+
+        if not settings.enable_advanced_safety_models:
+            self._initialized = "fallback"
+            logger.info("Advanced PII model disabled; using regex safety checks")
             return
             
         try:

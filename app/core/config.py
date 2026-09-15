@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     agent_escalation_threshold: float = 0.50
     retrieval_top_k: int = 10
     context_max_tokens: int = 8000
+    enable_advanced_safety_models: bool = False
 
     # ── Timeouts (seconds) ────────────────────────────────────────────────────
     # A single LLM call must return within llm_timeout_seconds or it is aborted

@@ -9,6 +9,7 @@ This matches the "Sentiment Model (Emotional)" in Layer 4 of the architecture di
 from typing import Any, Dict, Tuple, List
 import asyncio
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -91,6 +92,11 @@ class FinancialSentimentAnalyzer:
     async def _initialize(self):
         """Initialize sentiment models (HuggingFace transformers)."""
         if self._initialized:
+            return
+
+        if not settings.enable_advanced_safety_models:
+            self._initialized = "fallback"
+            logger.info("Advanced sentiment model disabled; using keyword analysis")
             return
             
         try:
