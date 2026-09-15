@@ -212,6 +212,15 @@ class ValidationNode:
             state.response_type = "escalation"
             return state
 
+        # Upstream safety, routing, or confidence checks already determined
+        # that this turn must be handed to a human. Avoid five extra LLM
+        # guardrail calls that cannot change that outcome.
+        if state.should_escalate:
+            state.response_type = "escalation"
+            state.metadata.setdefault("guardrail_scores", {})
+            state.add_reasoning("Validation skipped: turn already escalated upstream")
+            return state
+
         result = await self._validator.validate(state)
 
         # Write validation results back to state
